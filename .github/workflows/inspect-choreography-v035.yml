@@ -1,0 +1,27 @@
+name: Inspect Orbit8D choreography v035
+
+on:
+  push:
+    branches: [ bass-punishment-v035 ]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode and inspect choreography
+        run: |
+          cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
+          base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
+          unzip -q Orbit8D-Android.zip
+          cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
+          cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
+          cp patches/DemucsSeparator.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
+          python3 patches/patch_spatial_v03.py
+          python3 patches/patch_focus_depth_v031.py
+          python3 patches/patch_silence_scene_v034.py || true
+          echo '=== FOCUS SELECTION ==='
+          grep -nE 'focusStem|bestStem|bestScore|scores|getOrDefault|STEMS' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java || true
+          echo '=== CHOREOGRAPHY ==='
+          sed -n '1,420p' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
