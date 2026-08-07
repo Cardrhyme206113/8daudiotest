@@ -44,3 +44,10 @@ if extension.exists():
 main_patch = Path('patches/patch_main_realtime_v032.py')
 if main_patch.exists():
     exec(compile(main_patch.read_text(), str(main_patch), 'exec'), {'__name__': '__main__'})
+
+# Normalize the generated realtime renderer to the intermediate scene-aware form
+# expected by patch_silence_scene_v034.py. This keeps the historical patch chain
+# deterministic while the final playback renderer is replaced by Resonance later.
+prepare_scene = Path('patches/patch_prepare_silence_v04.py')
+if prepare_scene.exists():
+    exec(compile(prepare_scene.read_text(), str(prepare_scene), 'exec'), {'__name__': '__main__'})
