@@ -1,0 +1,1 @@
+Trigger signed Orbit8D Android release after persistent signing secrets were configured.
