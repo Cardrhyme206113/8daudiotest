@@ -78,8 +78,12 @@ s = s.replace(old, new, 1)
 p.write_text(s)
 print('Orbit8D v0.3.5 patch: bass focus punishment + anchored background bass applied')
 
-# Chain the optional 300% spatial-overdrive revision so the existing build workflow
-# remains the single source of truth for patch ordering.
+# Chain the 300% overdrive then the actual game-style Resonance Audio playback
+# renderer, preserving the workflow's existing patch order.
 extra = Path('patches/patch_intensity_300_v036.py')
 if extra.exists():
     exec(compile(extra.read_text(), str(extra), 'exec'), {'__name__': '__main__'})
+
+resonance = Path('patches/patch_resonance_audio_v04.py')
+if resonance.exists():
+    exec(compile(resonance.read_text(), str(resonance), 'exec'), {'__name__': '__main__'})
