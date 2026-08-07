@@ -1,0 +1,30 @@
+name: Inspect Orbit8D Android separator
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode project source
+        run: |
+          cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
+          base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
+          unzip -q Orbit8D-Android.zip
+      - name: Print separator source
+        run: |
+          echo '=== JAVA FILES ==='
+          find Orbit8D-Android/app/src/main/java -type f -name '*.java' -print
+          echo '=== INFERENCE REFERENCES ==='
+          grep -RniE 'OrtSession|session\.run|OnnxTensor|ModelManager|343980|stems|NNAPI|XNNPACK' Orbit8D-Android/app/src/main/java || true
+          echo '=== ALL JAVA SOURCE ==='
+          for f in $(find Orbit8D-Android/app/src/main/java -type f -name '*.java' | sort); do
+            echo "===== $f ====="
+            sed -n '1,420p' "$f"
+          done
