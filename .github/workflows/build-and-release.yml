@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
+      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
       ORBIT8D_VERSION_CODE: ${{ github.run_number }}
       ORBIT8D_VERSION_NAME: 0.1.${{ github.run_number }}
 
@@ -49,14 +49,35 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
-      - name: Prepare persistent release key
+      - name: Prepare permanent release key
         if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
+          KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
         run: |
-          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/orbit8d-release.jks"
+          python3 - <<'PY'
+          import os, base64, hashlib
+          from pathlib import Path
+          raw = os.environ['KEYSTORE_B64'].strip()
+          if raw.startswith('ORBIT8D_KEYSTORE_B64='):
+              raw = raw.split('=', 1)[1]
+          raw = ''.join(raw.split())
+          data = base64.b64decode(raw, validate=True)
+          expected = 'd4c5c0b53f63dd110d20be8db1843b7429e03763e0529572c772db68a603dad6'
+          if hashlib.sha256(data).hexdigest() != expected:
+              raise SystemExit('Permanent Orbit8D keystore does not match the expected signing key.')
+          (Path(os.environ['RUNNER_TEMP']) / 'orbit8d-release.jks').write_bytes(data)
+          print('Permanent Orbit8D signing key verified.')
+          PY
           chmod 600 "$RUNNER_TEMP/orbit8d-release.jks"
-          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass '${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}' -alias '${{ secrets.ORBIT8D_KEY_ALIAS }}' >/dev/null
+          KEY_PASSWORD="${KEY_PASSWORD#ORBIT8D_KEY_PASSWORD=}"
+          KEY_PASSWORD="$(printf '%s' "$KEY_PASSWORD" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          EXPECTED_PASS_HASH='f98afd9397e1a64e021540096c506db018a40bd3ce6dcb1d228e799beb226ac2'
+          GOT_PASS_HASH="$(printf '%s' "$KEY_PASSWORD" | sha256sum | cut -d' ' -f1)"
+          [[ "$GOT_PASS_HASH" == "$EXPECTED_PASS_HASH" ]] || { echo 'Permanent signing password mismatch.'; exit 21; }
+          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$KEY_PASSWORD" -alias orbit8d >/dev/null
+          echo "ORBIT8D_RESOLVED_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo 'ORBIT8D_RESOLVED_ALIAS=orbit8d' >> "$GITHUB_ENV"
 
       - name: Build debug validation APK
         if: github.event_name == 'pull_request' || env.HAS_SIGNING != 'true'
@@ -66,12 +87,12 @@ jobs:
       - name: Build signed updateable APK
         if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
         working-directory: Orbit8D-Android
-        env:
-          ORBIT8D_KEYSTORE_PATH: ${{ runner.temp }}/orbit8d-release.jks
-          ORBIT8D_KEYSTORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
-          ORBIT8D_KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
-          ORBIT8D_KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --stacktrace
+        run: |
+          export ORBIT8D_KEYSTORE_PATH="$RUNNER_TEMP/orbit8d-release.jks"
+          export ORBIT8D_KEYSTORE_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
+          export ORBIT8D_KEY_ALIAS="$ORBIT8D_RESOLVED_ALIAS"
+          export ORBIT8D_KEY_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
+          gradle :app:assembleRelease --stacktrace
 
       - name: Verify release signature
         if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
@@ -103,10 +124,10 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Signed updateable Orbit8D Android build. Same package and release key are kept for future releases, so the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
+            --notes "Signed updateable Orbit8D Android build. Future releases use this same package ID and permanent signing key, so Android accepts them as in-place updates and the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
         run: |
-          echo 'Debug build succeeded, but no public Release was created.'
-          echo 'Add ORBIT8D_KEYSTORE_B64, ORBIT8D_KEYSTORE_PASSWORD, ORBIT8D_KEY_ALIAS, and ORBIT8D_KEY_PASSWORD as repository Actions secrets to establish the permanent update signing chain.'
+          echo 'Signing secrets are unavailable; refusing to publish a debug-signed public release.'
+          exit 1
