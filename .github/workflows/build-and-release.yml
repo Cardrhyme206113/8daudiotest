@@ -16,7 +16,7 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
       ORBIT8D_VERSION_CODE: ${{ github.run_number }}
-      ORBIT8D_VERSION_NAME: 0.2.${{ github.run_number }}
+      ORBIT8D_VERSION_NAME: 0.3.${{ github.run_number }}
 
     steps:
       - uses: actions/checkout@v4
@@ -71,9 +71,16 @@ jobs:
           )
           p.write_text(s)
           PY
+
+          python3 patches/patch_spatial_v03.py
+
           grep -q 'NPU (NNAPI) · recommended' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'Spleeter 4-stem fp16' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'NNAPIFlags.CPU_DISABLED' Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
+          grep -q 'manualGainPercent' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
+          grep -q 'elevationDeg' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
+          grep -q 'Damped feedback room' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
+          grep -q 'Drums manual' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
 
       - name: Install Android SDK packages
         run: |
@@ -155,7 +162,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Orbit8D Lite: four-stem Spleeter fp16 ONNX pack (~79 MB total instead of ~166 MB), with NPU-first inference through Android NNAPI (FP16 + CPU_DISABLED where supported), then NNAPI hybrid/XNNPACK/CPU fallback. Same permanent package ID and signing key, so this installs as an in-place update. The model pack stays in app-private storage across updates; the old HTDemucs model is removed only after the new pack is fully verified."
+            --notes "Orbit8D 3D Spatial: stronger side clarity plus slow up/down elevation, dynamic near/far depth, distance-driven air absorption and a real damped late-reverb tail. The section-dominant stem still receives its extra lap while all stems retain the slow shared orbit. Adds persistent 0–200% manual volume overrides for drums, bass, other and vocals, multiplied on top of algorithmic DJ/focus automation. Uses the ~79 MB four-stem Spleeter fp16 ONNX pack with NPU-first NNAPI inference and the same permanent package/signing key, so this installs as an in-place update and keeps downloaded models across updates."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
