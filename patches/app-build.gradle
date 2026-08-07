@@ -65,4 +65,7 @@ android {
 
 dependencies {
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+    // Google VR / Resonance Audio game-style HRTF engine. This replaces the
+    // handmade playback panner with real binaural 3D sound-object rendering.
+    implementation 'com.google.vr:sdk-audio:1.130.0'
 }
