@@ -13,6 +13,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
+      ORBIT8D_VERSION_CODE: ${{ github.run_number }}
+      ORBIT8D_VERSION_NAME: 0.1.${{ github.run_number }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -41,32 +46,72 @@ jobs:
           Path('Orbit8D-Android.zip').write_bytes(base64.b64decode(clean, validate=False))
           PY
           unzip -q Orbit8D-Android.zip
+          cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
+          cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
 
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
-      - name: Build installable APK
+      - name: Prepare persistent release key
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
+        run: |
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/orbit8d-release.jks"
+          chmod 600 "$RUNNER_TEMP/orbit8d-release.jks"
+          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass '${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}' -alias '${{ secrets.ORBIT8D_KEY_ALIAS }}' >/dev/null
+
+      - name: Build debug validation APK
+        if: github.event_name == 'pull_request' || env.HAS_SIGNING != 'true'
         working-directory: Orbit8D-Android
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Prepare APK
-        run: cp Orbit8D-Android/app/build/outputs/apk/debug/app-debug.apk Orbit8D-v0.1.0-debug.apk
+      - name: Build signed updateable APK
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        working-directory: Orbit8D-Android
+        env:
+          ORBIT8D_KEYSTORE_PATH: ${{ runner.temp }}/orbit8d-release.jks
+          ORBIT8D_KEYSTORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
+          ORBIT8D_KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
+          ORBIT8D_KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Verify release signature
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs Orbit8D-Android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Prepare APK artifact
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" && "$HAS_SIGNING" == "true" ]]; then
+            cp Orbit8D-Android/app/build/outputs/apk/release/app-release.apk "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk"
+          else
+            cp Orbit8D-Android/app/build/outputs/apk/debug/app-debug.apk "Orbit8D-v${ORBIT8D_VERSION_NAME}-dev.apk"
+          fi
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Orbit8D-v0.1.0-debug
-          path: Orbit8D-v0.1.0-debug.apk
+          name: Orbit8D-v${{ env.ORBIT8D_VERSION_NAME }}
+          path: Orbit8D-v*.apk
 
-      - name: Create/update GitHub Release
-        if: github.event_name != 'pull_request'
+      - name: Create GitHub Release with signed APK
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.1.0
+          TAG: v${{ env.ORBIT8D_VERSION_NAME }}
         run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "${GITHUB_SHA}" --title "Orbit8D Android v0.1.0" --notes "First Android build of Orbit8D. Uses the 4-stem HTDemucs ONNX pipeline and the current section-aware orbit choreography. Temporary debug signing; persistent release signing will replace this before publishing."
-          fi
-          gh release upload "$TAG" Orbit8D-v0.1.0-debug.apk --clobber
+          gh release create "$TAG" \
+            "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
+            --target "${GITHUB_SHA}" \
+            --title "Orbit8D Android ${TAG}" \
+            --notes "Signed updateable Orbit8D Android build. Same package and release key are kept for future releases, so the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
+
+      - name: Explain missing signing secrets
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
+        run: |
+          echo 'Debug build succeeded, but no public Release was created.'
+          echo 'Add ORBIT8D_KEYSTORE_B64, ORBIT8D_KEYSTORE_PASSWORD, ORBIT8D_KEY_ALIAS, and ORBIT8D_KEY_PASSWORD as repository Actions secrets to establish the permanent update signing chain.'
