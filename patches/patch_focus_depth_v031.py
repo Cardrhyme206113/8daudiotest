@@ -27,14 +27,8 @@ s = replace_once(
 p.write_text(s)
 
 print('Applied focus depth excursion: ~3x throw, outside-ring visualization, final-second return.')
-
-# Temporary CI source inspection for the realtime manual-gain implementation.
-main = (JAVA / 'MainActivity.java').read_text().splitlines()
-print('=== PLAYBACK ARCHITECTURE ===')
-keys = ('MediaPlayer', 'ExoPlayer', 'AudioTrack', 'player', 'play', 'pause', 'seekTo', 'rendered', 'render', 'setVolume')
-for i, line in enumerate(main, 1):
-    if any(k in line for k in keys):
-        lo = max(1, i - 3); hi = min(len(main), i + 5)
-        print(f'--- MainActivity {lo}:{hi} ---')
-        for n in range(lo, hi + 1):
-            print(f'{n:04d}: {main[n-1]}')
+for filename in ('AudioProject.java', 'ProcessingEngine.java', 'SpatialRenderer.java'):
+    src = (JAVA / filename).read_text().splitlines()
+    print(f'=== SOURCE {filename} ===')
+    for i, line in enumerate(src, 1):
+        print(f'{i:04d}: {line}')
