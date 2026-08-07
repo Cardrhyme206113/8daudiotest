@@ -231,7 +231,7 @@ helpers = r'''
 
         private static double desiredLevel(String stem, String focus, String role, long slot) {
             // No active focus means no spotlight duck. Once a moving focus exists,
-            // the clean 2:1 presence relationship is the point: focus 100%, all
+            // only the moving/focus stem owns full presence: focus 100%, all
             // support stems 50%. Manual stem sliders still intentionally override
             // this later during realtime playback.
             if (focus == null || stem.equals(focus)) return 1.0;
