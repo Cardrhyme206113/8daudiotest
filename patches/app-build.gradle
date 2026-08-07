@@ -65,4 +65,12 @@ android {
 
 dependencies {
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+
+    // Google VR / Resonance Audio 1.180.0 binaries are fetched from Google's
+    // preserved source mirror into app/libs by the build patch. Using local AARs
+    // avoids relying on the retired JCenter repository.
+    implementation files('libs/sdk-common-1.180.0.aar')
+    implementation files('libs/sdk-base-1.180.0.aar')
+    implementation files('libs/sdk-audio-1.180.0.aar')
+    implementation 'com.google.protobuf.nano:protobuf-javanano:3.1.0'
 }
