@@ -24,6 +24,8 @@ jobs:
             Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java \
             Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java \
             Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java \
+            Orbit8D-Android/app/src/main/java/com/orbit8d/app/OrbitView.java \
+            Orbit8D-Android/app/src/main/java/com/orbit8d/app/ProcessingEngine.java \
             Orbit8D-Android/app/src/main/res/layout/activity_main.xml; do
             echo "===== FILE: $f ====="
             cat "$f"
