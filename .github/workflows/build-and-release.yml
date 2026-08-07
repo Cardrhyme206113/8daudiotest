@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_ALIAS != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
+      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
       ORBIT8D_VERSION_CODE: ${{ github.run_number }}
       ORBIT8D_VERSION_NAME: 0.1.${{ github.run_number }}
 
@@ -54,7 +54,7 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
           STORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           import os, base64, hashlib
@@ -69,15 +69,39 @@ jobs:
           got = hashlib.sha256(data).hexdigest()
           expected = 'd4c5c0b53f63dd110d20be8db1843b7429e03763e0529572c772db68a603dad6'
           if got != expected:
-              raise SystemExit(f'KEYSTORE_CONTENT_MISMATCH sha256={got}')
+              raise SystemExit('KEYSTORE_CONTENT_MISMATCH')
           print('Keystore bytes match the permanent Orbit8D signing key.')
           PY
           chmod 600 "$RUNNER_TEMP/orbit8d-release.jks"
-          STORE_PASSWORD="${STORE_PASSWORD#ORBIT8D_KEYSTORE_PASSWORD=}"
-          KEY_ALIAS="${KEY_ALIAS#ORBIT8D_KEY_ALIAS=}"
-          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$STORE_PASSWORD" >/dev/null || { echo 'KEYSTORE_PASSWORD_MISMATCH'; exit 21; }
-          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null || { echo 'KEY_ALIAS_MISMATCH'; exit 22; }
-          echo 'Keystore password and alias verified.'
+
+          clean_secret() {
+            local value="$1" prefix="$2"
+            value="${value#$prefix=}"
+            value="$(printf '%s' "$value" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            printf '%s' "$value"
+          }
+          STORE_PASSWORD="$(clean_secret "$STORE_PASSWORD" ORBIT8D_KEYSTORE_PASSWORD)"
+          KEY_PASSWORD="$(clean_secret "$KEY_PASSWORD" ORBIT8D_KEY_PASSWORD)"
+
+          EXPECTED_PASS_HASH='f98afd9397e1a64e021540096c506db018a40bd3ce6dcb1d228e799beb226ac2'
+          STORE_HASH="$(printf '%s' "$STORE_PASSWORD" | sha256sum | cut -d' ' -f1)"
+          KEY_HASH="$(printf '%s' "$KEY_PASSWORD" | sha256sum | cut -d' ' -f1)"
+
+          if [[ "$STORE_HASH" == "$EXPECTED_PASS_HASH" ]]; then
+            RESOLVED_PASSWORD="$STORE_PASSWORD"
+            echo 'Repository keystore-password secret matches.'
+          elif [[ "$KEY_HASH" == "$EXPECTED_PASS_HASH" ]]; then
+            RESOLVED_PASSWORD="$KEY_PASSWORD"
+            echo 'Key-password secret matches; using it for both keystore and key (the permanent JKS uses the same password for both).'
+          else
+            echo 'BOTH_PASSWORD_SECRETS_MISMATCH'
+            exit 21
+          fi
+
+          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$RESOLVED_PASSWORD" -alias orbit8d >/dev/null
+          echo 'Keystore password and orbit8d alias verified.'
+          echo "ORBIT8D_RESOLVED_PASSWORD=$RESOLVED_PASSWORD" >> "$GITHUB_ENV"
+          echo 'ORBIT8D_RESOLVED_ALIAS=orbit8d' >> "$GITHUB_ENV"
 
       - name: Build debug validation APK
         if: env.HAS_SIGNING != 'true'
@@ -87,15 +111,11 @@ jobs:
       - name: Build signed updateable APK
         if: env.HAS_SIGNING == 'true'
         working-directory: Orbit8D-Android
-        env:
-          ORBIT8D_KEYSTORE_PATH: ${{ runner.temp }}/orbit8d-release.jks
-          ORBIT8D_KEYSTORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
-          ORBIT8D_KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
-          ORBIT8D_KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
         run: |
-          export ORBIT8D_KEYSTORE_PASSWORD="${ORBIT8D_KEYSTORE_PASSWORD#ORBIT8D_KEYSTORE_PASSWORD=}"
-          export ORBIT8D_KEY_ALIAS="${ORBIT8D_KEY_ALIAS#ORBIT8D_KEY_ALIAS=}"
-          export ORBIT8D_KEY_PASSWORD="${ORBIT8D_KEY_PASSWORD#ORBIT8D_KEY_PASSWORD=}"
+          export ORBIT8D_KEYSTORE_PATH="$RUNNER_TEMP/orbit8d-release.jks"
+          export ORBIT8D_KEYSTORE_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
+          export ORBIT8D_KEY_ALIAS="$ORBIT8D_RESOLVED_ALIAS"
+          export ORBIT8D_KEY_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
           gradle :app:assembleRelease --stacktrace
 
       - name: Verify release signature
