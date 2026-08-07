@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
+      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEYSTORE_PASSWORD != '' && secrets.ORBIT8D_KEY_ALIAS != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
       ORBIT8D_VERSION_CODE: ${{ github.run_number }}
       ORBIT8D_VERSION_NAME: 0.1.${{ github.run_number }}
 
@@ -50,7 +50,7 @@ jobs:
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Prepare persistent release key
-        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
         run: |
@@ -59,12 +59,12 @@ jobs:
           keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass '${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}' -alias '${{ secrets.ORBIT8D_KEY_ALIAS }}' >/dev/null
 
       - name: Build debug validation APK
-        if: github.event_name == 'pull_request' || env.HAS_SIGNING != 'true'
+        if: env.HAS_SIGNING != 'true'
         working-directory: Orbit8D-Android
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Build signed updateable APK
-        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true'
         working-directory: Orbit8D-Android
         env:
           ORBIT8D_KEYSTORE_PATH: ${{ runner.temp }}/orbit8d-release.jks
@@ -74,14 +74,14 @@ jobs:
         run: gradle :app:assembleRelease --stacktrace
 
       - name: Verify release signature
-        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true'
         run: |
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
           "$APKSIGNER" verify --verbose --print-certs Orbit8D-Android/app/build/outputs/apk/release/app-release.apk
 
       - name: Prepare APK artifact
         run: |
-          if [[ "${{ github.event_name }}" != "pull_request" && "$HAS_SIGNING" == "true" ]]; then
+          if [[ "$HAS_SIGNING" == "true" ]]; then
             cp Orbit8D-Android/app/build/outputs/apk/release/app-release.apk "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk"
           else
             cp Orbit8D-Android/app/build/outputs/apk/debug/app-debug.apk "Orbit8D-v${ORBIT8D_VERSION_NAME}-dev.apk"
@@ -94,19 +94,21 @@ jobs:
           path: Orbit8D-v*.apk
 
       - name: Create GitHub Release with signed APK
-        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ env.ORBIT8D_VERSION_NAME }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          TARGET="${PR_HEAD_SHA:-$GITHUB_SHA}"
           gh release create "$TAG" \
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
-            --target "${GITHUB_SHA}" \
+            --target "$TARGET" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Signed updateable Orbit8D Android build. Same package and release key are kept for future releases, so the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
+            --notes "Signed updateable Orbit8D Android build. Future releases use the same package and persistent signing key, so Android accepts them as updates and the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
 
       - name: Explain missing signing secrets
-        if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
+        if: env.HAS_SIGNING != 'true'
         run: |
-          echo 'Debug build succeeded, but no public Release was created.'
-          echo 'Add ORBIT8D_KEYSTORE_B64, ORBIT8D_KEYSTORE_PASSWORD, ORBIT8D_KEY_ALIAS, and ORBIT8D_KEY_PASSWORD as repository Actions secrets to establish the permanent update signing chain.'
+          echo 'No signed Release was created because one or more Orbit8D signing secrets are unavailable to this workflow.'
+          exit 1
