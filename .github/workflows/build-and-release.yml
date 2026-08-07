@@ -73,8 +73,9 @@ jobs:
           PY
 
           python3 patches/patch_spatial_v03.py
+          # This patch applies the distinct/realtime extension internally and then
+          # runs the tolerant MainActivity completion patch if needed.
           python3 patches/patch_focus_depth_v031.py
-          python3 patches/patch_distinct_realtime_v032.py
           python3 patches/patch_silence_scene_v034.py
 
           grep -q 'NPU (NNAPI) · recommended' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
