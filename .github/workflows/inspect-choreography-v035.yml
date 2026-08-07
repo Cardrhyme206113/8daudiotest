@@ -20,9 +20,27 @@ jobs:
           cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
           cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
           cp patches/DemucsSeparator.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java')
+          s = p.read_text()
+          s = s.replace(
+              'String[] providers = {"XNNPACK · recommended", "NNAPI · experimental", "CPU · fallback"};',
+              'String[] providers = {"NPU (NNAPI) · recommended", "XNNPACK · fallback", "CPU · fallback"};'
+          )
+          s = s.replace(
+              'if (pos == 1) return DemucsSeparator.Provider.NNAPI;\n        if (pos == 2) return DemucsSeparator.Provider.CPU;\n        return DemucsSeparator.Provider.XNNPACK;',
+              'if (pos == 0) return DemucsSeparator.Provider.NNAPI;\n        if (pos == 1) return DemucsSeparator.Provider.XNNPACK;\n        return DemucsSeparator.Provider.CPU;'
+          )
+          s = s.replace(
+              'bindViews();\n        setupProviderSpinner();',
+              'bindViews();\n        importModel.setVisibility(View.GONE);\n        setupProviderSpinner();'
+          )
+          p.write_text(s)
+          PY
           python3 patches/patch_spatial_v03.py
           python3 patches/patch_focus_depth_v031.py
-          python3 patches/patch_silence_scene_v034.py || true
+          python3 patches/patch_silence_scene_v034.py
           echo '=== FOCUS SELECTION ==='
           grep -nE 'focusStem|bestStem|bestScore|scores|getOrDefault|STEMS' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java || true
           echo '=== CHOREOGRAPHY ==='
