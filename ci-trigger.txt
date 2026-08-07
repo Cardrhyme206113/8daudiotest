@@ -1,1 +1,1 @@
-Validate Orbit8D Android build.
+Validate Orbit8D Android build with persistent model storage and release-signing workflow.
