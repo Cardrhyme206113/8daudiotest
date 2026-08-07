@@ -37,14 +37,9 @@ jobs:
 
       - name: Decode project source
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import base64, re
-          text = Path('Orbit8D-Android.zip.b64').read_text(encoding='utf-8', errors='ignore')
-          clean = re.sub(r'[^A-Za-z0-9+/=]', '', text)
-          clean += '=' * (-len(clean) % 4)
-          Path('Orbit8D-Android.zip').write_bytes(base64.b64decode(clean, validate=False))
-          PY
+          cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
+          base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
+          echo 'bdcf54d67631a8e4d7b2a7cc6f5729e9f08681405ac8415e231dca278887a15a  Orbit8D-Android.zip' | sha256sum -c -
           unzip -q Orbit8D-Android.zip
           cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
           cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
