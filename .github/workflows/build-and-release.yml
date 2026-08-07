@@ -74,6 +74,8 @@ jobs:
 
           python3 patches/patch_spatial_v03.py
           python3 patches/patch_focus_depth_v031.py
+          python3 patches/patch_distinct_realtime_v032.py
+          python3 patches/patch_silence_scene_v034.py
 
           grep -q 'NPU (NNAPI) · recommended' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'Spleeter 4-stem fp16' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
@@ -84,6 +86,9 @@ jobs:
           grep -q 'Drums manual' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'tripleThrow' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
           grep -q '1.25); // focus stem may travel beyond' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
+          grep -q 'RealtimeStemPlayer' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          grep -q 'SilenceSceneMixer' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
+          grep -q 'only the moving/focus stem owns full presence' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
 
       - name: Install Android SDK packages
         run: |
@@ -165,7 +170,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Orbit8D 3D Spatial: the currently featured/moving stem now makes an exaggerated ~3x near/far excursion, can travel slightly beyond the visual room ring, stays far through most of its movement, then returns to its expected listener distance during roughly the final second. Other stems retain their previous depth behavior. Existing elevation, side clarity, damped late reverb, manual 0–200% stem overrides, Spleeter fp16 ONNX pack and NPU-first NNAPI inference remain unchanged."
+            --notes "Orbit8D Silence-Gated Focus Mixer: the moving/focus stem owns 100% algorithmic presence while support stems sit deliberately lower and slightly farther/wetter. Large scene changes latch only inside each stem's own ~90 ms quiet pocket so new levels/room character appear on the next entrance instead of cutting through sustained notes. Rarely, exactly one non-focus support stem can drop to 0% for a short isolation moment; both mute and return are silence-gated. Realtime 0-200% manual stem sliders remain multiplicative on top with no rerender. Distinct per-stem 3D roles, exaggerated ~3x focus depth throw, Spleeter fp16 ONNX and NPU-first NNAPI inference remain enabled."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
