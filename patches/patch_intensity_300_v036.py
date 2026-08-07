@@ -55,13 +55,17 @@ if count < 1:
     raise SystemExit('patch anchor not found: renderer settings intensity clamp')
 s = s.replace(old, 'Choreography.clamp(settings.intensity / 100.0, 0.0, 3.0)')
 
-old = '''            intensity = Choreography.clamp(intensity, 0.0, 1.0);
-            distance = Choreography.clamp(distance, 0.0, 1.0);'''
-new = '''            intensity = Choreography.clamp(intensity, 0.0, 3.0);
-            // Focus choreography can intentionally move outside the old visual room.
+old = '            intensity = Choreography.clamp(intensity, 0.0, 1.0);'
+new = '            intensity = Choreography.clamp(intensity, 0.0, 3.0);'
+if old not in s:
+    raise SystemExit('patch anchor not found: panner intensity overdrive clamp')
+s = s.replace(old, new, 1)
+
+old = '            distance = Choreography.clamp(distance, 0.0, 1.25); // focus stem may travel beyond the visual room shell'
+new = '''            // Focus choreography can intentionally move outside the old visual room.
             distance = Choreography.clamp(distance, 0.0, 1.55);'''
 if old not in s:
-    raise SystemExit('patch anchor not found: panner overdrive clamps')
+    raise SystemExit('patch anchor not found: panner distance overdrive clamp')
 s = s.replace(old, new, 1)
 
 old = '''            double elev = Choreography.clamp(elevationDeg / 48.0, -1.0, 1.0);'''
@@ -93,11 +97,11 @@ if old not in s:
     raise SystemExit('patch anchor not found: room feedback overdrive')
 s = s.replace(old, new, 1)
 
-# The room-send helper used to hard-cap at the 100% tuning. Raise only the ceiling
-# above 100%, keeping <=100% bit-for-bit on the same limit.
-old = '''        return Choreography.clamp(base, 0.015, 0.56);'''
-new = '''        double roomCeiling = 0.56 + 0.095 * Math.max(0.0, intensity - 1.0);
-        return Choreography.clamp(base, 0.015, roomCeiling);'''
+# Distinct-stem v0.3.2 raised the normal room-send ceiling to 0.72. Preserve that
+# at 100%, then allow a progressively wetter send up to 0.91 at 300%.
+old = '''        return Choreography.clamp(base, 0.012, 0.72);'''
+new = '''        double roomCeiling = 0.72 + 0.095 * Math.max(0.0, intensity - 1.0);
+        return Choreography.clamp(base, 0.012, roomCeiling);'''
 if old not in s:
     raise SystemExit('patch anchor not found: room send ceiling')
 s = s.replace(old, new, 1)
