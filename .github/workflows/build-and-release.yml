@@ -16,7 +16,7 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
       ORBIT8D_VERSION_CODE: ${{ github.run_number }}
-      ORBIT8D_VERSION_NAME: 0.1.${{ github.run_number }}
+      ORBIT8D_VERSION_NAME: 0.2.${{ github.run_number }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,34 @@ jobs:
           unzip -q Orbit8D-Android.zip
           cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
           cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
+
+      - name: Validate lightweight Demucs model contract
+        if: github.event_name == 'pull_request'
+        run: |
+          MODEL_URL='https://huggingface.co/Joker5514/VoiceIsolate-Models/resolve/main/demucs_v4_quantized.onnx?download=true'
+          curl -L --fail --retry 3 --retry-delay 2 "$MODEL_URL" -o /tmp/demucs_v4_quantized.onnx
+          echo "MODEL_BYTES=$(stat -c%s /tmp/demucs_v4_quantized.onnx)"
+          echo "MODEL_SHA256=$(sha256sum /tmp/demucs_v4_quantized.onnx | cut -d' ' -f1)"
+          python3 -m pip install --quiet 'onnx>=1.17,<2'
+          python3 - <<'PY'
+          import onnx
+          from onnx import TensorProto
+          p='/tmp/demucs_v4_quantized.onnx'
+          m=onnx.load(p, load_external_data=False)
+          def dims(v):
+              t=v.type.tensor_type
+              out=[]
+              for d in t.shape.dim:
+                  out.append(d.dim_value if d.HasField('dim_value') else (d.dim_param or '?'))
+              return out
+          print('MODEL_IR', m.ir_version, 'OPSET', [(x.domain,x.version) for x in m.opset_import])
+          print('INPUTS', [(v.name,dims(v),TensorProto.DataType.Name(v.type.tensor_type.elem_type)) for v in m.graph.input])
+          print('OUTPUTS', [(v.name,dims(v),TensorProto.DataType.Name(v.type.tensor_type.elem_type)) for v in m.graph.output])
+          for init in m.graph.initializer[:5]:
+              print('INIT', init.name, list(init.dims), TensorProto.DataType.Name(init.data_type))
+          PY
+          echo '--- Android inference code references ---'
+          grep -RniE 'OrtSession|session\.run|getInputNames|getOutputNames|343980|drums|bass|vocals|other' Orbit8D-Android/app/src/main/java/com/orbit8d/app || true
 
       - name: Install Android SDK packages
         run: |
@@ -124,7 +152,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Signed updateable Orbit8D Android build. Future releases use this same package ID and permanent signing key, so Android accepts them as in-place updates and the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
+            --notes "Orbit8D Android with the lightweight quantized Demucs v4 ONNX separator (~83 MB download instead of ~166 MB). Signed with the same permanent release key and package ID, so this installs as an in-place update. The downloaded model stays in app-private storage across future updates."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
