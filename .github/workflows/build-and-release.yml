@@ -73,6 +73,7 @@ jobs:
           PY
 
           python3 patches/patch_spatial_v03.py
+          python3 patches/patch_focus_depth_v031.py
 
           grep -q 'NPU (NNAPI) · recommended' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'Spleeter 4-stem fp16' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
@@ -81,6 +82,8 @@ jobs:
           grep -q 'elevationDeg' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
           grep -q 'Damped feedback room' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
           grep -q 'Drums manual' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          grep -q 'tripleThrow' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
+          grep -q '1.25); // focus stem may travel beyond' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
 
       - name: Install Android SDK packages
         run: |
@@ -162,7 +165,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Orbit8D 3D Spatial: stronger side clarity plus slow up/down elevation, dynamic near/far depth, distance-driven air absorption and a real damped late-reverb tail. The section-dominant stem still receives its extra lap while all stems retain the slow shared orbit. Adds persistent 0–200% manual volume overrides for drums, bass, other and vocals, multiplied on top of algorithmic DJ/focus automation. Uses the ~79 MB four-stem Spleeter fp16 ONNX pack with NPU-first NNAPI inference and the same permanent package/signing key, so this installs as an in-place update and keeps downloaded models across updates."
+            --notes "Orbit8D 3D Spatial: the currently featured/moving stem now makes an exaggerated ~3x near/far excursion, can travel slightly beyond the visual room ring, stays far through most of its movement, then returns to its expected listener distance during roughly the final second. Other stems retain their previous depth behavior. Existing elevation, side clarity, damped late reverb, manual 0–200% stem overrides, Spleeter fp16 ONNX pack and NPU-first NNAPI inference remain unchanged."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
