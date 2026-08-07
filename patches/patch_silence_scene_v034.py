@@ -10,7 +10,9 @@ old = '''        Map<String, WavFile.Writer> writers = new java.util.LinkedHashM
         long totalFrames = Long.MAX_VALUE;'''
 new = '''        Map<String, WavFile.Writer> writers = new java.util.LinkedHashMap<>();
         // Focus/background scene changes are deliberately latched only while the
-        // affected stem is locally quiet, so large mix/room changes are hidden.
+        // affected stem is locally quiet, so large room/depth changes are hidden.
+        // Gain contrast itself is enforced immediately below: focus = 100%,
+        // every other stem = <=50% while a focus stem is moving.
         SilenceSceneMixer sceneMixer = new SilenceSceneMixer();
         long totalFrames = Long.MAX_VALUE;'''
 if old not in s:
@@ -19,23 +21,50 @@ s = s.replace(old, new, 1)
 
 old = '''                    boolean isFocus = event != null && stream.name.equals(event.focusStem);
                     double autoGain = stemGain(stream.name, event, settings, focusEnv);
+                    double rms = blockRms(stream.left, stream.right, got);
+                    double sceneGain = sceneMixer.update(stream.name, event, tc, rms);
                     for (int i = 0; i < got; i++) {
                         double u = got <= 1 ? 0.0 : i / (double) (got - 1);
                         double az = Choreography.lerp(p0.azimuthDeg, p1.azimuthDeg, u);
                         double elevation = Choreography.lerp(p0.elevationDeg, p1.elevationDeg, u);
                         double distance = Choreography.lerp(p0.distance, p1.distance, u);
+
+                        // Scene contrast is more than volume. A background stem is
+                        // pushed slightly deeper/darker/wetter; when its new focus
+                        // state latches during silence it re-enters nearer and clearer.
+                        if (!isFocus) {
+                            distance = Choreography.clamp(
+                                    distance + (1.0 - sceneGain) * 0.24, 0.0, 1.25);
+                        }
                         double room = roomAmount(stream.name, event, settings, focusEnv, distance, az);
+                        if (!isFocus) {
+                            room = Choreography.clamp(
+                                    room + (1.0 - sceneGain) * 0.16, 0.01, 0.82);
+                        }
                         stream.panner.process(
                                 stream.left[i], stream.right[i], az, elevation, distance,
                                 intensity, isFocus ? focusEnv : 0.0, room,
                                 outL, outR, i);
-                        outL[i] = softLimit((float) (outL[i] * autoGain * LIVE_STEM_RENDER_BOOST));
-                        outR[i] = softLimit((float) (outR[i] * autoGain * LIVE_STEM_RENDER_BOOST));
+                        double sceneAuto = autoGain * sceneGain;
+                        outL[i] = softLimit((float) (outL[i] * sceneAuto * LIVE_STEM_RENDER_BOOST));
+                        outR[i] = softLimit((float) (outR[i] * sceneAuto * LIVE_STEM_RENDER_BOOST));
                     }'''
 new = '''                    boolean isFocus = event != null && stream.name.equals(event.focusStem);
                     double autoGain = stemGain(stream.name, event, settings, focusEnv);
                     double rms = blockRms(stream.left, stream.right, got);
                     double sceneGain = sceneMixer.update(stream.name, event, tc, rms);
+
+                    // Spotlight contrast must be obvious enough for direction to read.
+                    // Do NOT wait for silence for the gain relationship itself: as soon
+                    // as a focus stem owns the moving lap it is 100%, while every other
+                    // stem is capped at 50%. Silence gating still controls the deeper
+                    // scene/room state changes, and a rare support mute can still hit 0%.
+                    boolean hasActiveFocus = event != null && event.focusStem != null;
+                    if (hasActiveFocus) {
+                        if (isFocus) sceneGain = 1.0;
+                        else sceneGain = Math.min(sceneGain, 0.50);
+                    }
+
                     for (int i = 0; i < got; i++) {
                         double u = got <= 1 ? 0.0 : i / (double) (got - 1);
                         double az = Choreography.lerp(p0.azimuthDeg, p1.azimuthDeg, u);
@@ -89,10 +118,10 @@ helpers = r'''
      * Silence-gated focus mixer.
      *
      * The desired scene can change immediately when song structure/focus changes,
-     * but the *committed* state for each stem changes only after two consecutive
-     * quiet 2048-frame blocks (~93 ms at 44.1 kHz). This hides large gain/room
-     * changes in natural holes between notes/phrases instead of crossfading them
-     * audibly through sustained content.
+     * but the *committed* room/depth state for each stem changes only after two
+     * consecutive quiet 2048-frame blocks (~93 ms at 44.1 kHz). The actual
+     * foreground/background gain relationship is enforced outside this class so
+     * direction is always unambiguous: active focus = 100%, support <= 50%.
      */
     private static final class SilenceSceneMixer {
         private static final String[] MUTE_ORDER = {"other", "vocals", "drums"};
@@ -101,7 +130,7 @@ helpers = r'''
             double loudRef = 1e-5;
             int quietBlocks = 0;
             double committed = -1.0;
-            double desired = 0.55;
+            double desired = 0.50;
             long lastSceneSlot = Long.MIN_VALUE;
         }
 
@@ -164,8 +193,8 @@ helpers = r'''
                 }
             }
 
-            // Initial state can be set at time zero; afterwards, large scene changes
-            // latch only into a local quiet pocket.
+            // Initial state can be set at time zero; afterwards, large room/depth
+            // scene changes latch only into a local quiet pocket.
             if (st.committed < 0.0) {
                 st.committed = st.desired;
             } else if (gateOpen && Math.abs(st.desired - st.committed) > 0.015) {
@@ -201,33 +230,12 @@ helpers = r'''
         }
 
         private static double desiredLevel(String stem, String focus, String role, long slot) {
-            if (stem.equals(focus)) return 1.0; // only the moving/focus stem owns full presence
-
-            double base;
-            switch (role) {
-                case "drop":
-                    base = "drums".equals(stem) ? 0.70 : "bass".equals(stem) ? 0.66
-                            : "vocals".equals(stem) ? 0.49 : 0.41;
-                    break;
-                case "break":
-                    base = "vocals".equals(stem) ? 0.65 : "other".equals(stem) ? 0.58
-                            : "drums".equals(stem) ? 0.44 : 0.40;
-                    break;
-                case "build":
-                    base = "drums".equals(stem) ? 0.59 : "bass".equals(stem) ? 0.52
-                            : "vocals".equals(stem) ? 0.55 : 0.47;
-                    break;
-                default:
-                    base = "drums".equals(stem) ? 0.64 : "bass".equals(stem) ? 0.58
-                            : "vocals".equals(stem) ? 0.54 : 0.49;
-                    break;
-            }
-
-            // Tiny deterministic scene-to-scene variation avoids every background
-            // returning to the exact same level while keeping it clearly < focus.
-            int h = Math.abs((stem + ":" + slot).hashCode());
-            double variation = ((h % 17) - 8) * 0.006; // +/- 4.8 percentage points
-            return Choreography.clamp(base + variation, 0.34, 0.76);
+            // No active focus means no spotlight duck. Once a moving focus exists,
+            // the clean 2:1 presence relationship is the point: focus 100%, all
+            // support stems 50%. Manual stem sliders still intentionally override
+            // this later during realtime playback.
+            if (focus == null || stem.equals(focus)) return 1.0;
+            return 0.50;
         }
     }
 
@@ -235,4 +243,4 @@ helpers = r'''
 s = s.replace(anchor, anchor + helpers, 1)
 
 p.write_text(s)
-print('Orbit8D v0.3.4 patch: silence-gated focus/background scene mixer applied')
+print('Orbit8D v0.3.4 patch: focus 100%, all moving-scene support stems capped at 50%')
