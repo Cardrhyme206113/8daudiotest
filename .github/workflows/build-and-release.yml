@@ -87,7 +87,9 @@ jobs:
           grep -q 'Damped feedback room' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
           grep -q 'Drums manual' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'tripleThrow' Orbit8D-Android/app/src/main/java/com/orbit8d/app/Choreography.java
-          grep -q '1.25); // focus stem may travel beyond' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
+          grep -q 'distance = Choreography.clamp(distance, 0.0, 1.55);' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
+          grep -q 'intensity.setMax(300)' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          grep -q 'intensity = Choreography.clamp(intensity, 0.0, 3.0);' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
           grep -q 'RealtimeStemPlayer' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
           grep -q 'SilenceSceneMixer' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
           grep -q 'only the moving/focus stem owns full presence' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
@@ -174,7 +176,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Orbit8D Bass Punishment: bass is now strongly disfavored as the fast-moving/focus stem. Vocals, drums or other win focus whenever they have meaningful section activity; bass only gets the full focus lap in genuinely sparse/bass-led passages where the loudest non-bass stem is roughly <=20% of bass and near the analyzer floor. As a normal background stem bass stays almost front/center with only a tiny slow +/-7 degree sway instead of orbiting around the listener. The silence-gated focus mixer, rare one-at-a-time support mute, realtime 0-200% manual stem sliders, distinct 3D roles, exaggerated focus depth throw, Spleeter fp16 ONNX and NPU-first NNAPI inference remain enabled."
+            --notes "Orbit8D Bass Punishment + 300% 8D Overdrive: bass is strongly disfavored as the fast-moving/focus stem and stays nearly front/center with only a tiny slow sway unless the passage is genuinely sparse/bass-led. The 8D intensity control now runs from 0-300%; 100% preserves the previous full-strength tuning, while 101-300% progressively exaggerates binaural ITD/ILD and side clarity, elevation cues, focus near/far travel, direct-vs-room contrast, reverb send and late-room tail. Focus distance can reach 1.55 room radii at 300%. Silence-gated focus mixing, rare one-at-a-time support mute, realtime 0-200% manual stem sliders, Spleeter fp16 ONNX and NPU-first NNAPI inference remain enabled."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
