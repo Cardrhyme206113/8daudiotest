@@ -32,7 +32,14 @@ jobs:
 
       - name: Decode project source
         run: |
-          base64 -d Orbit8D-Android.zip.b64 > Orbit8D-Android.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          text = Path('Orbit8D-Android.zip.b64').read_text(encoding='utf-8', errors='ignore')
+          clean = re.sub(r'[^A-Za-z0-9+/=]', '', text)
+          clean += '=' * (-len(clean) % 4)
+          Path('Orbit8D-Android.zip').write_bytes(base64.b64decode(clean, validate=False))
+          PY
           unzip -q Orbit8D-Android.zip
 
       - name: Install Android SDK packages
@@ -44,9 +51,8 @@ jobs:
         working-directory: Orbit8D-Android
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Prepare release APK
-        run: |
-          cp Orbit8D-Android/app/build/outputs/apk/debug/app-debug.apk Orbit8D-v0.1.0-debug.apk
+      - name: Prepare APK
+        run: cp Orbit8D-Android/app/build/outputs/apk/debug/app-debug.apk Orbit8D-v0.1.0-debug.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -61,6 +67,6 @@ jobs:
           TAG: v0.1.0
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "${GITHUB_SHA}" --title "Orbit8D Android v0.1.0" --notes "First Android build of Orbit8D. Uses the 4-stem HTDemucs ONNX pipeline and the current section-aware orbit choreography. This APK is debug-signed so it can be installed directly."
+            gh release create "$TAG" --target "${GITHUB_SHA}" --title "Orbit8D Android v0.1.0" --notes "First Android build of Orbit8D. Uses the 4-stem HTDemucs ONNX pipeline and the current section-aware orbit choreography. Temporary debug signing; persistent release signing will replace this before publishing."
           fi
           gh release upload "$TAG" Orbit8D-v0.1.0-debug.apk --clobber
