@@ -3,6 +3,8 @@ name: Inspect Orbit8D choreography v035
 on:
   push:
     branches: [ bass-punishment-v035 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
