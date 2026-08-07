@@ -53,10 +53,31 @@ jobs:
         if: env.HAS_SIGNING == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
         run: |
-          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/orbit8d-release.jks"
+          python3 - <<'PY'
+          import os, base64, hashlib
+          from pathlib import Path
+          raw = os.environ['KEYSTORE_B64'].strip()
+          if raw.startswith('ORBIT8D_KEYSTORE_B64='):
+              raw = raw.split('=', 1)[1]
+          raw = ''.join(raw.split())
+          data = base64.b64decode(raw, validate=True)
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit8d-release.jks'
+          path.write_bytes(data)
+          got = hashlib.sha256(data).hexdigest()
+          expected = 'd4c5c0b53f63dd110d20be8db1843b7429e03763e0529572c772db68a603dad6'
+          if got != expected:
+              raise SystemExit(f'KEYSTORE_CONTENT_MISMATCH sha256={got}')
+          print('Keystore bytes match the permanent Orbit8D signing key.')
+          PY
           chmod 600 "$RUNNER_TEMP/orbit8d-release.jks"
-          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass '${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}' -alias '${{ secrets.ORBIT8D_KEY_ALIAS }}' >/dev/null
+          STORE_PASSWORD="${STORE_PASSWORD#ORBIT8D_KEYSTORE_PASSWORD=}"
+          KEY_ALIAS="${KEY_ALIAS#ORBIT8D_KEY_ALIAS=}"
+          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$STORE_PASSWORD" >/dev/null || { echo 'KEYSTORE_PASSWORD_MISMATCH'; exit 21; }
+          keytool -list -keystore "$RUNNER_TEMP/orbit8d-release.jks" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null || { echo 'KEY_ALIAS_MISMATCH'; exit 22; }
+          echo 'Keystore password and alias verified.'
 
       - name: Build debug validation APK
         if: env.HAS_SIGNING != 'true'
@@ -71,7 +92,11 @@ jobs:
           ORBIT8D_KEYSTORE_PASSWORD: ${{ secrets.ORBIT8D_KEYSTORE_PASSWORD }}
           ORBIT8D_KEY_ALIAS: ${{ secrets.ORBIT8D_KEY_ALIAS }}
           ORBIT8D_KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --stacktrace
+        run: |
+          export ORBIT8D_KEYSTORE_PASSWORD="${ORBIT8D_KEYSTORE_PASSWORD#ORBIT8D_KEYSTORE_PASSWORD=}"
+          export ORBIT8D_KEY_ALIAS="${ORBIT8D_KEY_ALIAS#ORBIT8D_KEY_ALIAS=}"
+          export ORBIT8D_KEY_PASSWORD="${ORBIT8D_KEY_PASSWORD#ORBIT8D_KEY_PASSWORD=}"
+          gradle :app:assembleRelease --stacktrace
 
       - name: Verify release signature
         if: env.HAS_SIGNING == 'true'
@@ -93,17 +118,19 @@ jobs:
           name: Orbit8D-v${{ env.ORBIT8D_VERSION_NAME }}
           path: Orbit8D-v*.apk
 
+      - name: PR validation only
+        if: github.event_name == 'pull_request' && env.HAS_SIGNING == 'true'
+        run: echo 'Signed APK validated. Official GitHub Release will be produced from main.'
+
       - name: Create GitHub Release with signed APK
-        if: env.HAS_SIGNING == 'true'
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ env.ORBIT8D_VERSION_NAME }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          TARGET="${PR_HEAD_SHA:-$GITHUB_SHA}"
           gh release create "$TAG" \
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
-            --target "$TARGET" \
+            --target "$GITHUB_SHA" \
             --title "Orbit8D Android ${TAG}" \
             --notes "Signed updateable Orbit8D Android build. Future releases use the same package and persistent signing key, so Android accepts them as updates and the downloaded HTDemucs ONNX model remains in app-private storage across normal APK updates."
 
