@@ -35,7 +35,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Decode project source
+      - name: Decode and patch project source
         run: |
           cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
           base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
@@ -43,34 +43,37 @@ jobs:
           unzip -q Orbit8D-Android.zip
           cp patches/app-build.gradle Orbit8D-Android/app/build.gradle
           cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
-
-      - name: Validate lightweight Demucs model contract
-        if: github.event_name == 'pull_request'
-        run: |
-          MODEL_URL='https://huggingface.co/Joker5514/VoiceIsolate-Models/resolve/main/demucs_v4_quantized.onnx?download=true'
-          curl -L --fail --retry 3 --retry-delay 2 "$MODEL_URL" -o /tmp/demucs_v4_quantized.onnx
-          echo "MODEL_BYTES=$(stat -c%s /tmp/demucs_v4_quantized.onnx)"
-          echo "MODEL_SHA256=$(sha256sum /tmp/demucs_v4_quantized.onnx | cut -d' ' -f1)"
-          python3 -m pip install --quiet 'onnx>=1.17,<2'
+          cp patches/DemucsSeparator.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
           python3 - <<'PY'
-          import onnx
-          from onnx import TensorProto
-          p='/tmp/demucs_v4_quantized.onnx'
-          m=onnx.load(p, load_external_data=False)
-          def dims(v):
-              t=v.type.tensor_type
-              out=[]
-              for d in t.shape.dim:
-                  out.append(d.dim_value if d.HasField('dim_value') else (d.dim_param or '?'))
-              return out
-          print('MODEL_IR', m.ir_version, 'OPSET', [(x.domain,x.version) for x in m.opset_import])
-          print('INPUTS', [(v.name,dims(v),TensorProto.DataType.Name(v.type.tensor_type.elem_type)) for v in m.graph.input])
-          print('OUTPUTS', [(v.name,dims(v),TensorProto.DataType.Name(v.type.tensor_type.elem_type)) for v in m.graph.output])
-          for init in m.graph.initializer[:5]:
-              print('INIT', init.name, list(init.dims), TensorProto.DataType.Name(init.data_type))
+          from pathlib import Path
+          p = Path('Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java')
+          s = p.read_text()
+          s = s.replace(
+              'String[] providers = {"XNNPACK · recommended", "NNAPI · experimental", "CPU · fallback"};',
+              'String[] providers = {"NPU (NNAPI) · recommended", "XNNPACK · fallback", "CPU · fallback"};'
+          )
+          s = s.replace(
+              'if (pos == 1) return DemucsSeparator.Provider.NNAPI;\n        if (pos == 2) return DemucsSeparator.Provider.CPU;\n        return DemucsSeparator.Provider.XNNPACK;',
+              'if (pos == 0) return DemucsSeparator.Provider.NNAPI;\n        if (pos == 1) return DemucsSeparator.Provider.XNNPACK;\n        return DemucsSeparator.Provider.CPU;'
+          )
+          s = s.replace(
+              '"HTDemucs 4-stem fp16-weight ONNX · %.1f MB on disk · XNNPACK recommended",\n                f.length() / 1048576.0',
+              '"Spleeter 4-stem fp16 · %.1f MB on disk · NPU/NNAPI preferred",\n                ModelManager.totalBytes(this) / 1048576.0'
+          )
+          s = s.replace(
+              '"Out of memory while loading Demucs. Close other apps or try CPU/XNNPACK after restarting Orbit8D."',
+              '"Separator ran out of memory. Try XNNPACK or CPU after restarting Orbit8D."'
+          )
+          s = s.replace('"Download/import the ONNX model first"', '"Download the Lite model pack first"')
+          s = s.replace(
+              'bindViews();\n        setupProviderSpinner();',
+              'bindViews();\n        importModel.setVisibility(View.GONE);\n        setupProviderSpinner();'
+          )
+          p.write_text(s)
           PY
-          echo '--- Android inference code references ---'
-          grep -RniE 'OrtSession|session\.run|getInputNames|getOutputNames|343980|drums|bass|vocals|other' Orbit8D-Android/app/src/main/java/com/orbit8d/app || true
+          grep -q 'NPU (NNAPI) · recommended' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          grep -q 'Spleeter 4-stem fp16' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          grep -q 'NNAPIFlags.CPU_DISABLED' Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
 
       - name: Install Android SDK packages
         run: |
@@ -152,7 +155,7 @@ jobs:
             "Orbit8D-v${ORBIT8D_VERSION_NAME}.apk" \
             --target "${GITHUB_SHA}" \
             --title "Orbit8D Android ${TAG}" \
-            --notes "Orbit8D Android with the lightweight quantized Demucs v4 ONNX separator (~83 MB download instead of ~166 MB). Signed with the same permanent release key and package ID, so this installs as an in-place update. The downloaded model stays in app-private storage across future updates."
+            --notes "Orbit8D Lite: four-stem Spleeter fp16 ONNX pack (~79 MB total instead of ~166 MB), with NPU-first inference through Android NNAPI (FP16 + CPU_DISABLED where supported), then NNAPI hybrid/XNNPACK/CPU fallback. Same permanent package ID and signing key, so this installs as an in-place update. The model pack stays in app-private storage across updates; the old HTDemucs model is removed only after the new pack is fully verified."
 
       - name: Explain missing signing secrets
         if: github.event_name != 'pull_request' && env.HAS_SIGNING != 'true'
