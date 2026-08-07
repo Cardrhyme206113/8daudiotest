@@ -1,0 +1,35 @@
+name: Inspect Orbit8D playback v032
+
+on:
+  push:
+    branches: [ distinct-stem-spatial-signatures-v032 ]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode patched source and inspect playback
+        run: |
+          cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
+          base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
+          unzip -q Orbit8D-Android.zip
+          cp patches/ModelManager.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
+          cp patches/DemucsSeparator.java Orbit8D-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java')
+          s=p.read_text()
+          s=s.replace('bindViews();\n        setupProviderSpinner();','bindViews();\n        importModel.setVisibility(View.GONE);\n        setupProviderSpinner();')
+          p.write_text(s)
+          PY
+          python3 patches/patch_spatial_v03.py
+          python3 patches/patch_focus_depth_v031.py
+          echo '=== MAIN PLAYBACK MATCHES ==='
+          grep -nE 'MediaPlayer|ExoPlayer|AudioTrack|SoundPool|play\(|pause\(|start\(|render|rendered|outputFile|player|seekTo|setVolume' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java || true
+          echo '=== MAIN ACTIVITY 1-360 ==='
+          sed -n '1,360p' Orbit8D-Android/app/src/main/java/com/orbit8d/app/MainActivity.java
+          echo '=== SPATIAL RENDERER SIGNATURES ==='
+          grep -nE 'class SpatialRenderer|static .*render|void render|File|Wav|AudioTrack|OutputStream|stemGain|StemStream' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java || true
+          sed -n '1,240p' Orbit8D-Android/app/src/main/java/com/orbit8d/app/SpatialRenderer.java
