@@ -12,129 +12,156 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
+/** Manages the lightweight four-file Spleeter model pack. */
 public final class ModelManager {
     private ModelManager() {}
 
-    public static final String MODEL_NAME = "htdemucs_fp16weights.onnx";
-    public static final String MODEL_URL = "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx?download=true";
-    public static final String MODEL_SHA256 = "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a";
-    public static final long EXPECTED_MIN_BYTES = 150L * 1024L * 1024L;
+    public static final String[] STEMS = {"vocals", "drums", "bass", "other"};
+    private static final String BASE_URL = "https://huggingface.co/Best-Practice/spleeter-4stems-onnx/resolve/main/";
+    private static final long EXPECTED_MIN_BYTES = 19_000_000L;
+
+    private static final Map<String, String> SHA256 = new LinkedHashMap<>();
+    static {
+        SHA256.put("vocals", "db47148ab1c52709ce694893f532c91abfe3edc4d46238939570e036a22878ca");
+        SHA256.put("drums",  "7ae4002e5633634674f74dc3356d5875b0da894d59ce0f60e844bb8f9cb8aa92");
+        SHA256.put("bass",   "ba4c4949a27222492cca49859901a873b4b71461dc48c7c5a51f93d31eb11f55");
+        SHA256.put("other",  "3cc59116cb7195946ab9596d8ca25984d09c0f8a70db8cf85d063132f97bc61d");
+    }
 
     public interface Progress {
         void onProgress(double fraction, String message);
         boolean isCancelled();
     }
 
+    /** Compatibility with ProcessingEngine: this now returns the model directory. */
     public static File modelFile(Context context) {
-        // Internal app-private storage survives normal APK updates. Keep the package name
-        // and signing certificate unchanged and the ~166 MB model is not downloaded again.
-        File dir = new File(context.getFilesDir(), "models");
+        File dir = new File(new File(context.getFilesDir(), "models"), "spleeter4-fp16");
         dir.mkdirs();
-        File target = new File(dir, MODEL_NAME);
+        return dir;
+    }
 
-        // One-time migration from early builds that stored the model in externalFilesDir.
-        if (!target.exists()) {
-            File externalRoot = context.getExternalFilesDir(null);
-            if (externalRoot != null) {
-                File legacy = new File(new File(externalRoot, "models"), MODEL_NAME);
-                if (legacy.exists() && legacy.length() >= EXPECTED_MIN_BYTES) {
-                    try {
-                        if (!legacy.renameTo(target)) copyFile(legacy, target);
-                    } catch (Exception ignored) {
-                        // If migration fails, the normal downloader/importer can restore it.
-                    }
-                }
-            }
+    public static File stemModelFile(File modelDir, String stem) {
+        return new File(modelDir, stem + ".fp16.onnx");
+    }
+
+    public static File stemModelFile(Context context, String stem) {
+        return stemModelFile(modelFile(context), stem);
+    }
+
+    public static long totalBytes(Context context) {
+        long total = 0L;
+        for (String stem : STEMS) {
+            File f = stemModelFile(context, stem);
+            if (f.exists()) total += f.length();
         }
-        return target;
+        return total;
     }
 
     public static boolean isModelPresent(Context context) {
-        File f = modelFile(context);
-        return f.exists() && f.length() >= EXPECTED_MIN_BYTES;
+        for (String stem : STEMS) {
+            File f = stemModelFile(context, stem);
+            if (!f.exists() || f.length() < EXPECTED_MIN_BYTES) return false;
+        }
+        return true;
     }
 
     public static void download(Context context, Progress progress) throws Exception {
-        File target = modelFile(context);
-        File part = new File(target.getAbsolutePath() + ".part");
-        if (part.exists()) part.delete();
+        File dir = modelFile(context);
+        long finishedBytes = 0L;
+        final long expectedTotal = 78_856_560L;
 
-        URL url = new URL(MODEL_URL);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setInstanceFollowRedirects(true);
-        connection.setConnectTimeout(20_000);
-        connection.setReadTimeout(30_000);
-        connection.setRequestProperty("User-Agent", "Orbit8D-Android/0.1");
-        connection.connect();
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IllegalStateException("Model download HTTP " + code);
-        long total = connection.getContentLengthLong();
-        long read = 0;
-        try (InputStream in = new BufferedInputStream(connection.getInputStream(), 1024 * 1024);
-             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(part), 1024 * 1024)) {
-            byte[] buffer = new byte[1024 * 1024];
-            int n;
-            while ((n = in.read(buffer)) >= 0) {
-                if (progress.isCancelled()) throw new InterruptedException("Cancelled");
-                if (n == 0) continue;
-                out.write(buffer, 0, n);
-                read += n;
-                double fraction = total > 0 ? read / (double) total : 0.0;
-                progress.onProgress(fraction, String.format("Downloading model · %.1f / %.1f MB", read / 1048576.0, total / 1048576.0));
+        for (int stemIndex = 0; stemIndex < STEMS.length; stemIndex++) {
+            String stem = STEMS[stemIndex];
+            File target = stemModelFile(dir, stem);
+            String expectedSha = SHA256.get(stem);
+
+            if (target.exists() && target.length() >= EXPECTED_MIN_BYTES) {
+                String have = sha256(target);
+                if (expectedSha.equalsIgnoreCase(have)) {
+                    finishedBytes += target.length();
+                    progress.onProgress(Math.min(0.99, finishedBytes / (double) expectedTotal),
+                            "Lite model pack · " + stem + " already verified");
+                    continue;
+                }
+                target.delete();
             }
-        } finally {
-            connection.disconnect();
+
+            File part = new File(target.getAbsolutePath() + ".part");
+            if (part.exists()) part.delete();
+            URL url = new URL(BASE_URL + stem + ".fp16.onnx");
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(20_000);
+            connection.setReadTimeout(45_000);
+            connection.setRequestProperty("User-Agent", "Orbit8D-Android/0.2");
+            connection.connect();
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) {
+                connection.disconnect();
+                throw new IllegalStateException("Model download HTTP " + code + " for " + stem);
+            }
+            long remoteBytes = connection.getContentLengthLong();
+            long read = 0L;
+            try (InputStream in = new BufferedInputStream(connection.getInputStream(), 1024 * 1024);
+                 BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(part), 1024 * 1024)) {
+                byte[] buffer = new byte[1024 * 1024];
+                int n;
+                while ((n = in.read(buffer)) >= 0) {
+                    if (progress.isCancelled()) throw new InterruptedException("Cancelled");
+                    if (n == 0) continue;
+                    out.write(buffer, 0, n);
+                    read += n;
+                    double denominator = remoteBytes > 0 ? remoteBytes : 19_714_140.0;
+                    double perFile = Math.min(1.0, read / denominator);
+                    progress.onProgress((stemIndex + perFile) / STEMS.length * 0.97,
+                            String.format("Downloading Lite Spleeter · %s · %.1f MB", stem, read / 1048576.0));
+                }
+            } finally {
+                connection.disconnect();
+            }
+
+            if (part.length() < EXPECTED_MIN_BYTES) {
+                part.delete();
+                throw new IllegalStateException("Downloaded " + stem + " model is unexpectedly small");
+            }
+            progress.onProgress((stemIndex + 0.98) / STEMS.length, "Verifying " + stem + " model");
+            String gotSha = sha256(part);
+            if (!expectedSha.equalsIgnoreCase(gotSha)) {
+                part.delete();
+                throw new IllegalStateException(stem + " model checksum mismatch: " + gotSha);
+            }
+            if (target.exists() && !target.delete()) throw new IllegalStateException("Could not replace " + stem + " model");
+            if (!part.renameTo(target)) {
+                copyFile(part, target);
+                part.delete();
+            }
+            finishedBytes += target.length();
         }
-        if (part.length() < EXPECTED_MIN_BYTES) throw new IllegalStateException("Downloaded model is unexpectedly small");
-        progress.onProgress(0.995, "Verifying model SHA-256");
-        String sha = sha256(part);
-        if (!MODEL_SHA256.equalsIgnoreCase(sha)) {
-            part.delete();
-            throw new IllegalStateException("Model checksum mismatch: " + sha);
-        }
-        if (target.exists() && !target.delete()) throw new IllegalStateException("Could not replace old model");
-        if (!part.renameTo(target)) {
-            copyFile(part, target);
-            part.delete();
-        }
-        progress.onProgress(1.0, "HTDemucs ONNX ready");
+
+        // Keep the previous Demucs file until the complete new pack is verified, then reclaim it.
+        if (isModelPresent(context)) cleanupLegacyDemucs(context);
+        progress.onProgress(1.0, "Spleeter 4-stem Lite pack ready · ~79 MB");
     }
 
+    /**
+     * The Lite backend is a four-file pack, so a single arbitrary ONNX import is ambiguous.
+     * Download is resumable/persistent and is the supported path for this build.
+     */
     public static void importModel(Context context, Uri uri, Progress progress) throws Exception {
-        File target = modelFile(context);
-        File part = new File(target.getAbsolutePath() + ".import");
-        if (part.exists()) part.delete();
-        long read = 0;
-        try (InputStream in = new BufferedInputStream(context.getContentResolver().openInputStream(uri), 1024 * 1024);
-             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(part), 1024 * 1024)) {
-            if (in == null) throw new IllegalStateException("Could not open selected model");
-            byte[] buffer = new byte[1024 * 1024];
-            int n;
-            while ((n = in.read(buffer)) >= 0) {
-                if (progress.isCancelled()) throw new InterruptedException("Cancelled");
-                if (n == 0) continue;
-                out.write(buffer, 0, n);
-                read += n;
-                progress.onProgress(Math.min(0.96, read / (170.0 * 1024.0 * 1024.0)), String.format("Importing model · %.1f MB", read / 1048576.0));
-            }
+        throw new IllegalStateException("Lite separator uses four ONNX files. Use Download model pack instead.");
+    }
+
+    private static void cleanupLegacyDemucs(Context context) {
+        File internal = new File(new File(context.getFilesDir(), "models"), "htdemucs_fp16weights.onnx");
+        if (internal.exists()) internal.delete();
+        File externalRoot = context.getExternalFilesDir(null);
+        if (externalRoot != null) {
+            File external = new File(new File(externalRoot, "models"), "htdemucs_fp16weights.onnx");
+            if (external.exists()) external.delete();
         }
-        if (part.length() < EXPECTED_MIN_BYTES) {
-            part.delete();
-            throw new IllegalStateException("Selected ONNX file is too small for this HTDemucs model");
-        }
-        progress.onProgress(0.98, "Verifying model");
-        String sha = sha256(part);
-        if (!MODEL_SHA256.equalsIgnoreCase(sha)) {
-            part.delete();
-            throw new IllegalStateException("This is not the expected htdemucs_fp16weights.onnx model");
-        }
-        if (target.exists()) target.delete();
-        if (!part.renameTo(target)) {
-            copyFile(part, target);
-            part.delete();
-        }
-        progress.onProgress(1.0, "Model imported");
     }
 
     private static String sha256(File file) throws Exception {
