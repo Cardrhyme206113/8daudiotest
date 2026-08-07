@@ -78,11 +78,15 @@ s = s.replace(old, new, 1)
 p.write_text(s)
 print('Orbit8D v0.3.5 patch: bass focus punishment + anchored background bass applied')
 
-# Chain the 300% overdrive then the actual game-style Resonance Audio playback
-# renderer, preserving the workflow's existing patch order.
+# Chain the 300% overdrive, stage Google's preserved GVR/Resonance AARs locally,
+# then replace playback with the game-style Resonance Audio renderer.
 extra = Path('patches/patch_intensity_300_v036.py')
 if extra.exists():
     exec(compile(extra.read_text(), str(extra), 'exec'), {'__name__': '__main__'})
+
+fetch_gvr = Path('patches/fetch_gvr_audio_v04.py')
+if fetch_gvr.exists():
+    exec(compile(fetch_gvr.read_text(), str(fetch_gvr), 'exec'), {'__name__': '__main__'})
 
 resonance = Path('patches/patch_resonance_audio_v04.py')
 if resonance.exists():
