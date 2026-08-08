@@ -26,6 +26,32 @@ shutil.copy2(Path('patches/DemucsSeparator.java'), dst_java / 'DemucsSeparator.j
 shutil.copy2(Path('pulsedeck/SmartPlayerActivity.java'), dst_java / 'SmartPlayerActivity.java')
 shutil.copy2(Path('pulsedeck/SmartPlaybackService.java'), dst_java / 'SmartPlaybackService.java')
 
+# Android's document picker can stop the Activity and unbind it from the playback
+# service. The picker result may arrive before the async service bind finishes.
+# Queue selected URIs until onServiceConnected instead of silently dropping them.
+activity = dst_java / 'SmartPlayerActivity.java'
+s = activity.read_text()
+s = s.replace(
+    'private boolean bound;\n    private String lastArtKey',
+    'private boolean bound;\n    private final ArrayList<Uri> pendingPicked = new ArrayList<>();\n    private String lastArtKey'
+)
+s = s.replace(
+    'service = ((SmartPlaybackService.LocalBinder) binder).getService();\n            bound = true;\n            refreshNow();',
+    'service = ((SmartPlaybackService.LocalBinder) binder).getService();\n            bound = true;\n            if (!pendingPicked.isEmpty()) {\n                service.addSongs(new ArrayList<>(pendingPicked));\n                pendingPicked.clear();\n            }\n            refreshNow();'
+)
+s = s.replace(
+    'if (requestCode != PICK_AUDIO || resultCode != RESULT_OK || data == null || service == null) return;',
+    'if (requestCode != PICK_AUDIO || resultCode != RESULT_OK || data == null) return;'
+)
+s = s.replace(
+    'service.addSongs(picked);\n    }\n\n    private void refreshNow()',
+    'if (picked.isEmpty()) return;\n        if (service != null) {\n            service.addSongs(picked);\n        } else {\n            pendingPicked.addAll(picked);\n        }\n    }\n\n    private void refreshNow()'
+)
+for required in ('pendingPicked', 'service.addSongs(new ArrayList<>(pendingPicked))', 'pendingPicked.addAll(picked)'):
+    if required not in s:
+        raise SystemExit('Song picker fix patch failed: ' + required)
+activity.write_text(s)
+
 shutil.copy2(Path('pulsedeck/app-build.gradle'), dst / 'app/build.gradle')
 shutil.copy2(Path('pulsedeck/AndroidManifest.xml'), dst / 'app/src/main/AndroidManifest.xml')
 
