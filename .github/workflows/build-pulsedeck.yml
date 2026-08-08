@@ -1,0 +1,121 @@
+name: Build PulseDeck Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING: ${{ secrets.ORBIT8D_KEYSTORE_B64 != '' && secrets.ORBIT8D_KEY_PASSWORD != '' }}
+      PULSEDECK_VERSION_CODE: ${{ github.run_number }}
+      PULSEDECK_VERSION_NAME: 0.1.${{ github.run_number }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Decode proven Android base
+        run: |
+          cat bundle/part*.b64 > Orbit8D-Android.zip.b64.joined
+          base64 -d Orbit8D-Android.zip.b64.joined > Orbit8D-Android.zip
+          echo 'bdcf54d67631a8e4d7b2a7cc6f5729e9f08681405ac8415e231dca278887a15a  Orbit8D-Android.zip' | sha256sum -c -
+          unzip -q Orbit8D-Android.zip
+          python3 pulsedeck/prepare_project.py
+          grep -q 'class SmartPlaybackService' PulseDeck-Android/app/src/main/java/com/orbit8d/app/SmartPlaybackService.java
+          grep -q 'spleeter4-fp16' PulseDeck-Android/app/src/main/java/com/orbit8d/app/ModelManager.java
+          grep -q 'NNAPIFlags.CPU_DISABLED' PulseDeck-Android/app/src/main/java/com/orbit8d/app/DemucsSeparator.java
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Prepare permanent release key
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ORBIT8D_KEYSTORE_B64 }}
+          KEY_PASSWORD: ${{ secrets.ORBIT8D_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import os, base64, hashlib
+          from pathlib import Path
+          raw = os.environ['KEYSTORE_B64'].strip()
+          if raw.startswith('ORBIT8D_KEYSTORE_B64='):
+              raw = raw.split('=', 1)[1]
+          raw = ''.join(raw.split())
+          data = base64.b64decode(raw, validate=True)
+          expected = 'd4c5c0b53f63dd110d20be8db1843b7429e03763e0529572c772db68a603dad6'
+          if hashlib.sha256(data).hexdigest() != expected:
+              raise SystemExit('Permanent keystore does not match expected signing key')
+          (Path(os.environ['RUNNER_TEMP']) / 'pulsedeck-release.jks').write_bytes(data)
+          PY
+          chmod 600 "$RUNNER_TEMP/pulsedeck-release.jks"
+          KEY_PASSWORD="${KEY_PASSWORD#ORBIT8D_KEY_PASSWORD=}"
+          KEY_PASSWORD="$(printf '%s' "$KEY_PASSWORD" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          EXPECTED_PASS_HASH='f98afd9397e1a64e021540096c506db018a40bd3ce6dcb1d228e799beb226ac2'
+          GOT_PASS_HASH="$(printf '%s' "$KEY_PASSWORD" | sha256sum | cut -d' ' -f1)"
+          [[ "$GOT_PASS_HASH" == "$EXPECTED_PASS_HASH" ]] || { echo 'Permanent signing password mismatch.'; exit 21; }
+          keytool -list -keystore "$RUNNER_TEMP/pulsedeck-release.jks" -storepass "$KEY_PASSWORD" -alias orbit8d >/dev/null
+          echo "ORBIT8D_RESOLVED_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build debug validation APK
+        if: github.event_name == 'pull_request' || env.HAS_SIGNING != 'true'
+        working-directory: PulseDeck-Android
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Build signed release APK
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        working-directory: PulseDeck-Android
+        run: |
+          export ORBIT8D_KEYSTORE_PATH="$RUNNER_TEMP/pulsedeck-release.jks"
+          export ORBIT8D_KEYSTORE_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
+          export ORBIT8D_KEY_ALIAS="orbit8d"
+          export ORBIT8D_KEY_PASSWORD="$ORBIT8D_RESOLVED_PASSWORD"
+          gradle :app:assembleRelease --stacktrace
+
+      - name: Prepare APK artifact
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" && "$HAS_SIGNING" == "true" ]]; then
+            cp PulseDeck-Android/app/build/outputs/apk/release/app-release.apk "PulseDeck-v${PULSEDECK_VERSION_NAME}.apk"
+          else
+            cp PulseDeck-Android/app/build/outputs/apk/debug/app-debug.apk "PulseDeck-v${PULSEDECK_VERSION_NAME}-dev.apk"
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PulseDeck-v${{ env.PULSEDECK_VERSION_NAME }}
+          path: PulseDeck-v*.apk
+
+      - name: Create GitHub Release
+        if: github.event_name != 'pull_request' && env.HAS_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: pulsedeck-v${{ env.PULSEDECK_VERSION_NAME }}
+        run: |
+          gh release create "$TAG" \
+            "PulseDeck-v${PULSEDECK_VERSION_NAME}.apk" \
+            --target "${GITHUB_SHA}" \
+            --title "PulseDeck Android v${PULSEDECK_VERSION_NAME}" \
+            --notes "PulseDeck smart stem shuffle: multiple local MP3 selection, ~30-second excitement portions, least-played weighted randomness, background playback, and low-latency four-stem crossfades. Uses the ~79 MB four-model Spleeter FP16 ONNX pack with NNAPI/NPU-first inference and XNNPACK/CPU fallback."

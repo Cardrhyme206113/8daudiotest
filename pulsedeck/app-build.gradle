@@ -1,0 +1,66 @@
+plugins {
+    id 'com.android.application'
+}
+
+def envOr(String name, String fallback) {
+    def value = System.getenv(name)
+    return value == null || value.trim().isEmpty() ? fallback : value
+}
+
+def releaseKeystore = System.getenv('ORBIT8D_KEYSTORE_PATH')
+def hasReleaseSigning = releaseKeystore != null && !releaseKeystore.trim().isEmpty()
+
+android {
+    namespace 'com.orbit8d.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.cardrhyme.pulsedeck'
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(envOr('PULSEDECK_VERSION_CODE', '1'))
+        versionName envOr('PULSEDECK_VERSION_NAME', '0.1.0')
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv('ORBIT8D_KEYSTORE_PASSWORD')
+                keyAlias envOr('ORBIT8D_KEY_ALIAS', 'orbit8d')
+                keyPassword System.getenv('ORBIT8D_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.dev'
+            versionNameSuffix '-dev'
+        }
+        release {
+            minifyEnabled false
+            if (hasReleaseSigning) signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/INDEX.LIST', 'META-INF/DEPENDENCIES']
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+}
